@@ -1,10 +1,10 @@
 " greputils.vim -- Interface with grep and id-utils.
 " Author: Hari Krishna (hari_vim at yahoo dot com)
-" Last Change: 02-Jul-2004 @ 09:48
+" Last Change: 19-Jul-2004 @ 10:06
 " Created:     10-Jun-2004 from idutils.vim
 " Requires: Vim-6.3, genutils.vim(1.13), multvals.vim(3.6)
 " Depends On: cmdalias.vim(1.0)
-" Version: 2.1.3
+" Version: 2.2.0
 " Licence: This program is free software; you can redistribute it and/or
 "          modify it under the terms of the GNU General Public License.
 "          See http://www.gnu.org/copyleft/gpl.txt 
@@ -49,6 +49,11 @@
 "     need to add support for a new grep command or a grep-like tool, it is
 "     just a matter of modifying a few internal variables and possibly adding
 "     a new set of commands.
+"   - Make sure that the 'grepprg' and 'shellpipe' options are properly set
+"     and that the built-in :grep itself works. For GNU id-utils, make sure
+"     IDPATH environmental variable is set or path to the ID file is specified
+"     with the "-f" argument in the g:greputilsLidcmd setting. You can also
+"     specify the "-f ID" arguments to the :IDGrep command.
 "   - Uses EscapeCommand() function from genutils.vim plugin that supports
 "     Cygwin "bash", MS Windows "cmd" and Unix "sh" for shell escaping. Other
 "     environments are untested.
@@ -111,8 +116,8 @@
 "
 "   - If any argument contains spaces, then you need to protect them by
 "     prefixing them with a backslash.  The following will filter those lines
-"     that don't contain "ABC XYZ".
-"       IDGrep <cword> +f ABC\ XYZ 
+"     that don't contain "public static".
+"       IDGrep <cword> +f public\ static
 "
 " Installation:
 "   - Drop the file in your plugin directory or source it from your vimrc.
@@ -162,14 +167,18 @@
 "       g:greputilsExpandCurWord to have the plugin expand "<cword>" and
 "       "<cWORD>" tokens. This essentially gives you all the goodness of file
 "       completion while still being able to do tag completions.
+"     - For Vim built-in grep operations such as :BufGrep, if you want to
+"       change the character sorrounding the pattern from the default '/' to
+"       something else (see |E146|), you can use the
+"       g:greputilsVimGrepSepChar.
 " TODO:
 "   - On windows, setting multiple ID files for IDPATH doesn't work, provide a
 "     workaround.
-"   - Can I implement custom completion to support both tag and filenames?
+"   - Can we implement custom completion to support both tag and filenames?
 "   - How can I move GrepPreview window to the bottom like the :cwindow?
 "   - Is it possible that I am setting 'winfixheight' on a wrong window?
 "   - Can I use python to execute a grep in the background and fillup preview
-"     buffer when done?
+"     buffer the output is being generated?
 
 if exists("loaded_greputils")
   finish
@@ -243,6 +252,10 @@ if !exists("g:greputilsExpandCurWord")
   let g:greputilsExpandCurWord = 0
 endif
 
+if !exists("g:greputilsVimGrepSepChar")
+  let g:greputilsVimGrepSepChar = '/'
+endif
+
 " Add the "lid -R grep" and "find -printf" format to grep formats.
 set gfm+=%f:%l:%m
 
@@ -271,10 +284,16 @@ exec 'command! -nargs=+ -complete='.g:greputilsFindCompMode
 exec 'command! -nargs=+ -complete='.g:greputilsFindCompMode
       \ 'FindpAdd call <SID>Grep("find", 1, 1, <f-args>)'
 
+command! -nargs=? WinGrep :call <SID>VimGrep(0, 'windo', <q-args>)
+command! -nargs=? WinGrepAdd :call <SID>VimGrep(1, 'windo', <q-args>)
+command! -nargs=? BufGrep :call <SID>VimGrep(0, 'bufdo', <q-args>)
+command! -nargs=? BufGrepAdd :call <SID>VimGrep(1, 'bufdo', <q-args>)
+command! -nargs=? ArgGrep :call <SID>VimGrep(0, 'argdo', <q-args>)
+command! -nargs=? ArgGrepAdd :call <SID>VimGrep(1, 'argdo', <q-args>)
+
 if exists('*CmdAlias')
   call CmdAlias('grep', 'Grep')
   call CmdAlias('grepadd', 'GrepAdd')
-  call CmdAlias('find', 'Find')
 endif
 
 command! -count=0 GrepPreview :call <SID>OpenGrepPreview(<count>)
@@ -349,12 +368,11 @@ function! s:Grep(cmdType, preview, grepAdd, ...)
           if fileArgs == ''
             if s:IsOpt(arg, cmdType)
               let argIsFilePat = 0
-            elseif s:IsOpt(prevArg, cmdType)
-              let opt = strpart(prevArg, 1)
+            elseif s:IsOpt(prevArg, cmdType) &&
+                  \ MvContainsElement(s:{cmdType}ArgOpts, ',',
+                  \   strpart(prevArg, 1))
               " If the previous option required an argument.
-              if MvContainsElement(s:{cmdType}ArgOpts, ',', opt)
-                let argIsFilePat = 0
-              endif
+              let argIsFilePat = 0
             elseif patternsCollected < s:{cmdType}NumPatterns
               let argIsFilePat = 0
               let patternsCollected = patternsCollected + 1
@@ -378,9 +396,9 @@ function! s:Grep(cmdType, preview, grepAdd, ...)
   try
     " When completion mode is not file, let us manually do the Vim filename
     "   special character expansions (like %, # etc.)
-    if (fileArgs !~ '^\s*$') && (
-          \ (a:cmdType == 'grep' && g:greputilsGrepCompMode != 'file') || 
-          \ (a:cmdType == 'lid' && g:greputilsLidCompMode != 'file'))
+    if (fileArgs !~ '^\s*$') &&
+          \ (g:greputils{substitute(a:cmdType, '.', '\U&', '')}CompMode !=
+          \   'file')
       let fileArgs = UserFileExpand(fileArgs)
       if g:greputilsExpandCurWord
         " Also expand <cword> and <cWORD> in other arguments.
@@ -423,19 +441,48 @@ function! s:Grep(cmdType, preview, grepAdd, ...)
         echomsg 'shell returned '.v:shell_error
         return
       endif
-      let s:prevCwd = getcwd()
-      let s:prevCurHit = 1
-      call SilentSubstitute("\<CR>$", "%s///e")
-      "call SilentSubstitute("\%([a-zA-Z]\)\@<!:", "%s//|/e")
-      call SilentSubstitute('^\(\f\+\):\(\d\+\):', '%s//\1|\2|/e')
       exec MakeArgumentList('argumentList', ' ')
-      call setline(1, 'Results for: '.a:cmdType.' '.argumentList)
-      setl ft=qf
-      1
+      call s:InitPreviewWindow(a:cmdType, argumentList)
     endif
   finally
     call s:GrepReset()
   endtry
+endfunction
+
+function! s:InitPreviewWindow(cmd, args)
+  let s:prevCwd = getcwd()
+  let s:prevCurHit = 1
+  call SilentSubstitute("\<CR>$", "%s///e")
+  call SilentSubstitute('^\(\f\+\):\(\d\+\):', '%s//\1|\2|/e')
+  call setline(1, 'Last grep command: '.a:cmd.' '.a:args)
+  setl ft=qf
+  1
+endfunction
+
+function! s:VimGrep(grepAdd, vimWild, ...)
+  let prvWinnr = bufwinnr(s:myBufNum)
+  if a:vimWild ==# 'windo' && prvWinnr != -1
+    " We should first close the preview window to avoid getting double
+    " counted.
+    let curWinnr = winnr()
+    if curWinnr != prvWinnr
+      exec prvWinnr'wincmd w'
+    endif
+    close
+  endif
+  let cmd = a:vimWild.' '.'g'.g:greputilsVimGrepSepChar.(a:0 > 0 ? a:1 : '').
+        \ g:greputilsVimGrepSepChar
+  echo cmd
+  let result = GetVimCmdOutput(cmd.'echo expand("%").":".line(".").": ".getline(".")')
+  call s:OpenGrepPreview(0)
+  if a:grepAdd
+    $
+  else
+    call OptClearBuffer()
+  endif
+  keepmarks silent! put =result
+  keepmarks silent! delete _
+  call s:InitPreviewWindow('', cmd)
 endfunction
 
 function! s:IsOpt(arg, cmdType)
@@ -456,14 +503,14 @@ function! s:SubCmdType(cmdType)
 endfunction
 
 function! s:GrepCfile(cmd, useBang, ...)
-  if a:0 > 0
+  let curWinNr = winnr()
+  if a:0 > 0 && a:1 != '' " Happens for <q-args>
     exec a:cmd.(a:useBang?'!':'') a:1
   else
     let tempFile = tempname()
     let _errorfile = &errorfile
     let _undolevels = &undolevels
     let _cpo = &cpo
-    let curWinNr = winnr()
     try
       set undolevels=2 " Make sure we can at least undo the below change.
       call SilentSubstitute('^\(\f\+\)|\(\d\+\)|', '%s//\1:\2:/e')
@@ -517,9 +564,9 @@ function! s:OpenGrepPreview(size)
       set isfname-=\
       set isfname-=[
       if exists('+shellslash')
-        exec "sp \\\\". s:title
+        exec "sp \\\\". escape(s:title, ' ')
       else
-        exec "sp \\". s:title
+        exec "sp \\". escape(s:title, ' ')
       endif
       exec "normal i\<C-G>u\<Esc>"
       let s:myBufNum = bufnr('%')
