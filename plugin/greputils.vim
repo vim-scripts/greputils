@@ -1,10 +1,10 @@
 " greputils.vim -- Interface with grep and id-utils.
 " Author: Hari Krishna (hari_vim at yahoo dot com)
-" Last Change: 16-Jun-2004 @ 19:54
+" Last Change: 02-Jul-2004 @ 09:48
 " Created:     10-Jun-2004 from idutils.vim
-" Requires: Vim-6.2 or higher, genutils.vim(1.12), multvals.vim(3.6)
+" Requires: Vim-6.3, genutils.vim(1.13), multvals.vim(3.6)
 " Depends On: cmdalias.vim(1.0)
-" Version: 2.0.3
+" Version: 2.1.3
 " Licence: This program is free software; you can redistribute it and/or
 "          modify it under the terms of the GNU General Public License.
 "          See http://www.gnu.org/copyleft/gpl.txt 
@@ -21,7 +21,10 @@
 "         - Allow you to preview the results before letting Vim handle them as
 "           part of quickfix. This, besides allowing you to further filter the
 "           results, also prevents Vim from adding buffers for files that are
-"           uninteresting and thus help reduce the number of buffers.
+"           uninteresting and thus help reduce the number of buffers. It also
+"           supports basic quickfix commands that can be used to open a buffer 
+"           without needing to convert it to a quickfix window. You can
+"           consider it as a lightweight quickfix window.
 "     - As a bonus, the plugin also works around Vim problem with creating a
 "       number of unnamed buffers as you close and open quickfix window
 "       several times. This helps keep buffer list uncluttered.
@@ -51,8 +54,8 @@
 "     environments are untested.
 "   - Defines the following commands:
 "
-"       Grep, GrepAdd, IDGrep, IDGrepAdd
-"       Grepp, GreppAdd, IDGrepp, IDGreppAdd
+"       Grep, GrepAdd, IDGrep, IDGrepAdd, Find, FindAdd
+"       Grepp, GreppAdd, IDGrepp, IDGreppAdd, Findp, FindpAdd
 "
 "     The second set of commands are used to open the results in a preview
 "     window instead of directly in the quickfix window. And those that have a
@@ -60,6 +63,7 @@
 "     instead of replacing them (just like in :grepadd). This can be very
 "     useful in combination with the preview commands.
 "
+"     You can open the preview window at anytime using GrepPreview command.
 "     Once you are in the preview window, you can filter the results using the
 "     regular Vim commands, and when you would like to browse the results
 "     using Vim quickfix commands, just use Cfile Cgetfile commands, which are
@@ -69,6 +73,17 @@
 "     If cmdalias.vim is installed, it also creates aliases for the Grep,
 "     GrepAdd, Cfile and Cgetfile commands to the corresponding built-in
 "     commands, i.e., grep, grepadd, cfile and cgetfile respectively.
+"
+"     The preview window supports the following commands:
+"       preview command     quickfix command ~
+"       GG [count]          cc [count]
+"       [count]GNext        [count]cnext
+"       [count]GPrev        [count]cNext, cprevious
+"       <CR>                <CR>
+"       <2-LeftMouse>       <2-LeftMouse>
+"
+"     The commands supports [count] argument just like the corresponding
+"     quickfix command.
 "
 "   General Syntax:
 "       <grep command> [<grep/lid options> ...] <regex/keyword>
@@ -104,16 +119,20 @@
 "   - Make sure genutils.vim and multvals.vim are also installed.
 "
 "   Settings:
-"       g:greputilsLidcmd, g:greputilsFiltercmd, g:greputilsAutoCopen,
-"       g:greputilsVimGrepCmd, g:greputilsVimGrepAddCmd,
-"       g:greputilsGrepCompMode, g:greputilsLidCompMode,
+"       g:greputilsLidcmd, g:greputilsFindcmd, g:greputilsFiltercmd,
+"       g:greputilsFindMsgFmt, g:greputilsAutoCopen, g:greputilsVimGrepCmd,
+"       g:greputilsVimGrepAddCmd, g:greputilsGrepCompMode,
+"       g:greputilsLidCompMode, g:greputilsFindCompMode,
 "       g:greputilsExpandCurWord
 "
-"     - Use g:greputilsLidcmd to set the path/name to the lid executable
-"       (defaults to "lid").
+"     - Use g:greputilsLidcmd and g:greputilsFiltercmd to set the path/name to
+"       the lid and GNU or compatible find executable (defaults to "lid").
 "     - Use g:greputilsFiltercmd to set the path/name of the command that you
 "       would like to use as the filter when "+f" option is used (defaults to
 "       "grep").
+"     - Set g:greputilsFindMsgFmt to change the message (%m) part of the find
+"       results. You can specify anything that is accepted in the argument for
+"       "-printf" find option.
 "     - Use g:greputilsAutoCopen to specify if the error list window should
 "       automatically be opened or closed based on whether there are any
 "       results or not (runs :cwindow command at the end).
@@ -123,35 +142,40 @@
 "       wrapper to finally invoke another plugin after the arguments are
 "       escaped and 'shellpipe' is properly set. The callee typically can just
 "       run the :grep command on the arguments and do additional setup.
-"     - Use g:greputilsGrepCompMode to change the default completion mode for
-"       Grep commands from "tag" to other supported modes. You can set this
-"       e.g., to "file" to match the behavior with that of the built-in :grep
-"       and :grepadd.  Changing this option at runtime requires you to reload
-"       the plugin.  When the completion mode is not "file", the plugin
-"       expands the special characters in the filenames just like Vim would if
-"       the completion mode was "file". However, since this expansion is not
-"       done in other arguments, it can be considered as an advantage (think
-"       about passing patterns to the command literally). However it still
-"       useful to have "<cword>" and "<cWORD>" expand inside the patterns, in
-"       which case you can set g:greputilsExpandCurWord setting.
-"     - Since lid doesn't accept filenames as arguments, "tag" completion is
-"       the best option. However if you still need to change this to something
-"       else, use g:greputilsLidCompMode setting.
-"
-"       NOTE: If you set the command completion mode to "file", the plugin has
-"       no control on the way Vim expands certain special characters (such as
-"       %, #) even before the plugin sees them, so I don't recommended it.
+"     - Use g:greputilsGrepCompMode, g:greputilsLidCompMode and
+"       g:greputilsFindCompMode to change the completion mode for Grep, IDGrep
+"       and Find commands respectively. The default completion mode for Grep
+"       and Find are "file" to match that of the built-in commands, where as
+"       it is set to "tag" for IDGrep (except the -f argument to specify an ID
+"       file, you never need to pass filenam to lid). When completion mode is
+"       "file", Vim automatically expands filename meta-characters such as "%"
+"       and "#" on the command-line, so you still need to escape then. If this
+"       is an issue for you, then you should switch to "tag" or a different
+"       completion mode. When completion mode is not "file", the plugin
+"       expands the filename meta characters in the file arguments anyway, and
+"       this can be considered as an advantage (think about passing patterns
+"       to the command literally). However it is still useful to have
+"       "<cword>" and "<cWORD>" expand inside the patterns, in which case you
+"       can set g:greputilsExpandCurWord setting.  Changing this option at
+"       runtime requires you to reload the plugin.
 "     - When completion mode is not set to "file", you can set
 "       g:greputilsExpandCurWord to have the plugin expand "<cword>" and
 "       "<cWORD>" tokens. This essentially gives you all the goodness of file
 "       completion while still being able to do tag completions.
 " TODO:
+"   - On windows, setting multiple ID files for IDPATH doesn't work, provide a
+"     workaround.
+"   - Can I implement custom completion to support both tag and filenames?
+"   - How can I move GrepPreview window to the bottom like the :cwindow?
+"   - Is it possible that I am setting 'winfixheight' on a wrong window?
+"   - Can I use python to execute a grep in the background and fillup preview
+"     buffer when done?
 
 if exists("loaded_greputils")
   finish
 endif
-if v:version < 602
-  echomsg "You need Vim 6.2 to run this version of greputils.vim."
+if v:version < 603
+  echomsg 'greputils: You need at least Vim 6.3'
   finish
 endif
 if !exists("loaded_multvals")
@@ -164,7 +188,7 @@ endif
 if !exists("loaded_genutils")
   runtime plugin/genutils.vim
 endif
-if !exists("loaded_genutils") || loaded_genutils < 112
+if !exists("loaded_genutils") || loaded_genutils < 113
   echomsg "greputils: You need a newer version of genutils.vim plugin"
   finish
 endif
@@ -176,11 +200,19 @@ if !exists("loaded_cmdalias")
 endif
 
 if !exists("g:greputilsLidcmd")
-  let g:greputilsLidcmd = "lid"
+  let g:greputilsLidcmd = 'lid'
+endif
+
+if !exists("g:greputilsFindcmd")
+  let g:greputilsFindcmd = 'find'
 endif
 
 if !exists("g:greputilsFiltercmd")
-  let g:greputilsFiltercmd = "grep"
+  let g:greputilsFiltercmd = 'grep'
+endif
+
+if !exists("g:greputilsFindMsgFmt")
+  let g:greputilsFindMsgFmt = '\ Size(%s)\ Modified(%Tb\ %Td\ %TH:%TM)\ Mode(%m)\ Links(%n)\n'
 endif
 
 if !exists("g:greputilsAutoCopen")
@@ -196,19 +228,23 @@ if !exists("g:greputilsVimGrepAddCmd")
 endif
 
 if !exists("g:greputilsGrepCompMode")
-  let g:greputilsGrepCompMode = 'tag'
+  let g:greputilsGrepCompMode = 'file'
 endif
 
 if !exists("g:greputilsLidCompMode")
   let g:greputilsLidCompMode = 'tag'
 endif
 
+if !exists("g:greputilsFindCompMode")
+  let g:greputilsFindCompMode = 'file'
+endif
+
 if !exists("g:greputilsExpandCurWord")
   let g:greputilsExpandCurWord = 0
 endif
 
-" Add the "lid -R grep" format to grep formats.
-set gfm+="%f:%l:%m"
+" Add the "lid -R grep" and "find -printf" format to grep formats.
+set gfm+=%f:%l:%m
 
 exec 'command! -nargs=+ -complete='.g:greputilsGrepCompMode
       \ 'Grep call <SID>Grep("grep", 0, 0, <f-args>)'
@@ -226,20 +262,32 @@ exec 'command! -nargs=+ -complete='.g:greputilsLidCompMode
       \ 'IDGrepp call <SID>Grep("lid", 1, 0, <f-args>)'
 exec 'command! -nargs=+ -complete='.g:greputilsLidCompMode
       \ 'IDGreppAdd call <SID>Grep("lid", 1, 1, <f-args>)'
+exec 'command! -nargs=+ -complete='.g:greputilsFindCompMode
+      \ 'Find call <SID>Grep("find", 0, 0, <f-args>)'
+exec 'command! -nargs=+ -complete='.g:greputilsFindCompMode
+      \ 'FindAdd call <SID>Grep("find", 0, 1, <f-args>)'
+exec 'command! -nargs=+ -complete='.g:greputilsFindCompMode
+      \ 'Findp call <SID>Grep("find", 1, 0, <f-args>)'
+exec 'command! -nargs=+ -complete='.g:greputilsFindCompMode
+      \ 'FindpAdd call <SID>Grep("find", 1, 1, <f-args>)'
 
 if exists('*CmdAlias')
   call CmdAlias('grep', 'Grep')
   call CmdAlias('grepadd', 'GrepAdd')
+  call CmdAlias('find', 'Find')
 endif
 
-command! GrepPreview :call <SID>OpenGrepPreview()
-
-let s:savedGrepprg = ''
-let s:savedShellpipe = ''
+command! -count=0 GrepPreview :call <SID>OpenGrepPreview(<count>)
 
 if !exists('s:myBufNum')
 let s:myBufNum = -1
 let s:title = '[Grep Preview]'
+
+let s:savedGrepprg = ''
+let s:savedShellpipe = ''
+
+let s:prevCwd = ''
+let s:prevCurHit = 1
 endif
 
 let s:curQuickFixBufs = ''
@@ -248,9 +296,16 @@ aug GrepUtilsAutoQFBufWipeout
   au BufReadPost quickfix :call s:RegisterQuickfixBuf(bufnr('%'))
 aug END
 
-let s:supportedCmds = 'grep,lid,'
+let s:supportedCmds = 'grep,lid,find,'
+
 let s:grepCmdExpr = '' " Just depend on the default settings.
-let s:lidCmdExpr = 'g:greputilsLidcmd." -R grep"'
+let s:lidCmdExpr = 'g:greputilsLidcmd'
+let s:findCmdExpr = 'g:greputilsFindcmd'
+
+" These options are appended at the end of user supplied options.
+let s:grepAddOptsExpr = ''
+let s:lidAddOptsExpr = '"-R grep"'
+let s:findAddOptsExpr = '"-printf %h/%f:1:".g:greputilsFindMsgFmt'
 
 " Options for GNU grep that require an argument.
 let s:gnuGrepArgOpts = 'A,B,C,D,d,e,f,m,'
@@ -259,9 +314,8 @@ let s:gnuGrepNumPatterns = 1
 let s:findstrArgOpts = 'D'
 let s:findstrOptPrfx = '/'
 let s:findstrNumPatterns = 1
-let s:lidArgOpts = 'f,k,R,S,F,a,'
-let s:lidOptPrfx = '-'
 let s:lidNumPatterns = -1 " Unlimited (no file args).
+let s:findNumPatterns = -1
 
 " Pass an optional filter pattern as a second argument.
 function! s:Grep(cmdType, preview, grepAdd, ...)
@@ -327,14 +381,7 @@ function! s:Grep(cmdType, preview, grepAdd, ...)
     if (fileArgs !~ '^\s*$') && (
           \ (a:cmdType == 'grep' && g:greputilsGrepCompMode != 'file') || 
           \ (a:cmdType == 'lid' && g:greputilsLidCompMode != 'file'))
-      " Define it only locally to avoid showing up in command completions.
-      command! -complete=file -nargs=* GrepUtilsFileExpander :echo <q-args>
-      try
-        let fileArgs = substitute(GetVimCmdOutput(
-              \ 'GrepUtilsFileExpander ' . fileArgs), '^\_s\+\|\_s\+$', '', 'g')
-      finally
-        delcommand GrepUtilsFileExpander
-      endtry
+      let fileArgs = UserFileExpand(fileArgs)
       if g:greputilsExpandCurWord
         " Also expand <cword> and <cWORD> in other arguments.
         let grepOpts = substitute(grepOpts, '<cword>\|<cWORD>',
@@ -344,7 +391,11 @@ function! s:Grep(cmdType, preview, grepAdd, ...)
       endif
     endif
     call s:GrepSet(a:cmdType, a:preview, filterArgs)
+    if s:{a:cmdType}AddOptsExpr != ''
+      let grepOpts = grepOpts.' '.s:EvalExpr(s:{a:cmdType}AddOptsExpr)
+    endif
     let grepOpts = EscapeCommand('', grepOpts, fileArgs)
+    let grepOpts = Escape(grepOpts, '%#!')
     if !a:preview
       if a:grepAdd == 1
         exec g:greputilsVimGrepAddCmd grepOpts
@@ -356,7 +407,7 @@ function! s:Grep(cmdType, preview, grepAdd, ...)
       endif
     else
       let cmd = &grepprg . ' ' . grepOpts
-      call s:OpenGrepPreview()
+      call s:OpenGrepPreview(0)
       if a:grepAdd
         $
       else
@@ -372,9 +423,14 @@ function! s:Grep(cmdType, preview, grepAdd, ...)
         echomsg 'shell returned '.v:shell_error
         return
       endif
+      let s:prevCwd = getcwd()
+      let s:prevCurHit = 1
       call SilentSubstitute("\<CR>$", "%s///e")
+      "call SilentSubstitute("\%([a-zA-Z]\)\@<!:", "%s//|/e")
+      call SilentSubstitute('^\(\f\+\):\(\d\+\):', '%s//\1|\2|/e')
       exec MakeArgumentList('argumentList', ' ')
       call setline(1, 'Results for: '.a:cmdType.' '.argumentList)
+      setl ft=qf
       1
     endif
   finally
@@ -395,38 +451,51 @@ function! s:SubCmdType(cmdType)
       return 'gnuGrep'
     endif
   else
-    return 'lid'
+    return a:cmdType
   endif
 endfunction
 
-function! s:GrepCfile(cmd, useBang)
-  let tempFile = tempname()
-  let _errorfile = &errorfile
-  let _undolevels = &undolevels
-  let _cpo = &cpo
-  let curWinNr = winnr()
-  try
-    set undolevels=1 " Make sure we can at least undo the below change.
-    silent! 1delete _
-    if line('$') == 1 && getline(1) =~ '^\s*$'
+function! s:GrepCfile(cmd, useBang, ...)
+  if a:0 > 0
+    exec a:cmd.(a:useBang?'!':'') a:1
+  else
+    let tempFile = tempname()
+    let _errorfile = &errorfile
+    let _undolevels = &undolevels
+    let _cpo = &cpo
+    let curWinNr = winnr()
+    try
+      set undolevels=2 " Make sure we can at least undo the below change.
+      call SilentSubstitute('^\(\f\+\)|\(\d\+\)|', '%s//\1:\2:/e')
+      silent! 1delete _
+      if line('$') == 1 && getline(1) =~ '^\s*$'
+        undo | undo
+        echo 'Cfile: No results to read'
+        return | " No hits.
+      endif
+      set cpo-=A
+      let restoreCwd = 0
+      if getcwd() !=# s:prevCwd
+        let restoreCwd = 1
+        exec 'lcd' s:prevCwd
+      endif
+      silent! exec 'write' tempFile
+      if restoreCwd
+        lcd -
+      endif
       undo
-      echo 'Cfile: No results to read'
-      return | " No hits.
-    endif
-    set cpo-=A
-    silent! exec 'write' tempFile
-    undo
 
-    if NumberOfWindows() > 1
-      wincmd p
-    endif
-    exec a:cmd.(a:useBang?'!':'') tempFile
-  finally
-    let &cpo = _cpo
-    let &undolevels = _undolevels
-    let &errorfile = _errorfile
-    call delete(tempFile)
-  endtry
+      if NumberOfWindows() > 1
+        wincmd p
+      endif
+      exec a:cmd.(a:useBang?'!':'') tempFile
+    finally
+      let &cpo = _cpo
+      let &undolevels = _undolevels
+      let &errorfile = _errorfile
+      call delete(tempFile)
+    endtry
+  endif
   if winnr() != curWinNr
     wincmd p
     silent! quit
@@ -436,10 +505,12 @@ function! s:GrepCfile(cmd, useBang)
   endif
 endfunction
 
-function! s:OpenGrepPreview()
+function! s:OpenGrepPreview(size)
   let _isf = &isfname
   let _splitbelow = &splitbelow
+  let _equalalways = &equalalways
   set splitbelow
+  set noequalalways
   try
     if s:myBufNum == -1
       " Temporarily modify isfname to avoid treating the name as a pattern.
@@ -461,10 +532,16 @@ function! s:OpenGrepPreview()
       endif
     endif
   finally
+    let &equalalways = _equalalways
     let &isfname = _isf
     let &splitbelow = _splitbelow
   endtry
   call s:SetupBuf()
+
+  " Resize only if this is not the only window vertically.
+  if !IsOnlyVerticalWindow()
+    exec 'resize' ((a:size > 0) ? a:size : 10)
+  endif
 endfunction
 
 function! s:SetupBuf()
@@ -474,19 +551,82 @@ function! s:SetupBuf()
 
   setlocal winfixheight
 
-  command! -buffer -bang Cfile
-        \ :call <SID>GrepCfile('cfile', '<bang>' == '!' ? 1 : 0)
-  command! -buffer -bang Cgetfile
-        \ :call <SID>GrepCfile('cgetfile', '<bang>' == '!' ? 1 : 0)
+  command! -buffer -bang -nargs=? Cfile
+        \ :call <SID>GrepCfile('cfile', '<bang>' == '!' ? 1 : 0, <q-args>)
+  command! -buffer -bang -nargs=? Cgetfile
+        \ :call <SID>GrepCfile('cgetfile', '<bang>' == '!' ? 1 : 0, <q-args>)
 
   if exists('*CmdAlias') && g:loaded_cmdalias >= 101
     call CmdAlias('cfile', 'Cfile', '<buffer>')
     call CmdAlias('cgetfile', 'Cgetfile', '<buffer>')
   endif
 
-  " Resize only if this is not the only window vertically.
-  if !IsOnlyVerticalWindow()
-    resize 10
+  command! -buffer -range=1 GNext :call s:GNextImpl(1, <line1>)
+  command! -buffer -range=1 GPrev :call s:GNextImpl(-1, <line1>)
+  command! -buffer -count=0 GG :call s:GNextImpl(0, <count>)
+
+  nnoremap <buffer> <silent> <CR> :GG<CR>
+  nnoremap <buffer> <silent> <2-LeftMouse> :GG<CR>
+  nnoremap <buffer> <silent> <C-N> :GNext<CR>
+  nnoremap <buffer> <silent> <C-P> :GPrev<CR>
+
+  hi! def link GrepUtilsPreviewPosition Search
+  call s:MarkCcLine()
+endfunction
+
+function! s:MarkCcLine()
+  silent! syn clear GrepUtilsPreviewPosition
+  if s:prevCurHit > 1
+    exec 'syn match GrepUtilsPreviewPosition "\%'.s:prevCurHit.'l.*"'
+  endif
+endfunction
+
+function! s:GNextImpl(forward, cnt)
+  if a:forward == 0
+    " Calculate absolution error.
+    let newHit = (a:cnt > 0) ? (a:cnt+1) : line('.')
+  else
+    " Calculate relative error.
+    let newHit = s:prevCurHit + (a:forward * a:cnt)
+  endif
+  if newHit < 2
+    let newHit = 2
+  elseif newHit > line('$')
+    let newHit = line('$')
+  endif
+  exec newHit
+  let fileName = ''
+  let lineNr = 1
+  silent! exec substitute(getline('.'), '^\(\f\+\)|\(\d\+\)|.*',
+        \ "let fileName='\\1' | let lineNr='\\2'", '')
+  if fileName != ''
+    if !filereadable(fileName)
+      let fileName = s:prevCwd.((exists('+shellslash') && !&shellslash)?'\':'/')
+            \ . fileName
+      if !filereadable(fileName)
+        echohl ErrorMsg | echo "Can't read file: " . fileName | echohl NONE
+        return
+      endif
+    endif
+
+    let s:prevCurHit = newHit
+    call s:MarkCcLine()
+    if NumberOfWindows() == 1
+      exec 'split +'.lineNr fileName
+    else
+      let winnr = bufwinnr(fileName)
+      if winnr != -1
+        exec winnr.'wincmd w'
+      else
+        if &switchbuf ==# 'split'
+          split
+        else
+          wincmd p
+        endif
+        exec 'edit' fileName
+      endif
+      exec lineNr
+    endif
   endif
 endfunction
 
@@ -506,6 +646,7 @@ function! s:GrepSet(cmdType, preview, filterArgs)
     while MvIterHasNext('GrepSet')
       let filterCmd = filterCmd . '| ' .
             \ EscapeCommand(g:greputilsFiltercmd, MvIterNext('GrepSet'), '')
+      let filterCmd = Escape(filterCmd, '%#!')
     endwhile
     call MvIterDestroy('GrepSet')
   endif
