@@ -1,10 +1,10 @@
 " greputils.vim -- Interface with grep and id-utils.
 " Author: Hari Krishna (hari_vim at yahoo dot com)
-" Last Change: 10-Aug-2004 @ 20:37
+" Last Change: 14-Mar-2005 @ 20:22
 " Created:     10-Jun-2004 from idutils.vim
-" Requires: Vim-6.3, genutils.vim(1.15), multvals.vim(3.6)
+" Requires: Vim-6.3, genutils.vim(1.18), multvals.vim(3.6)
 " Depends On: cmdalias.vim(1.0)
-" Version: 2.4.0
+" Version: 2.5.3
 " Acknowledgements:
 "   - gumnos (Tim Chase) (gumnos at hotmail dot com) for the idea of
 "     capturing the g/re/p output and using it as a simple grep. The
@@ -19,11 +19,11 @@
 "     to simplify the usage. However this plugin aims at providing two
 "     specific features:
 "         - Escape the arguments such that the arguments can be passed to the
-"           external grep/lid literally. This avoids unwanted interpretations
-"           by the shell, thus allowing you to concentrate on the regular
-"           expression patterns rather than how to escape them. This has been
-"           tested well on both windows and UNIX with sh/bash/cmd as command
-"           shells.
+"           external grep/lid/find literally. This avoids unwanted
+"           interpretations by the shell, thus allowing you to concentrate on
+"           the regular expression patterns rather than how to escape them.
+"           This has been tested well on both windows and UNIX with
+"           sh/bash/cmd as command shells.
 "         - Allow you to preview the results before letting Vim handle them as
 "           part of quickfix. This, besides allowing you to further filter the
 "           results, also prevents Vim from adding buffers for files that are
@@ -54,14 +54,14 @@
 "
 "   - Other than the preview functionality which enables filtering, the plugin
 "     also provides an easy way to specify a number of filter commands that
-"     you can chain on the output of the grep/lid output each prefixed with
+"     you can chain on the output of the grep/lid/find, each prefixed with
 "     "+f". The arguments to the filter command are themselves escaped, the
 "     same way as the grep command arguments as described above.
 "   - Supports GNU "grep" and MS Windows "findstr" for running "find-in-file"
-"     kind of searches, and id-utils "lid" for running index searches.  If you
-"     need to add support for a new grep command or a grep-like tool, it is
-"     just a matter of modifying a few internal variables and possibly adding
-"     a new set of commands.
+"     kind of searches, id-utils "lid" for running index searches, and GNU
+"     "find" to search for file names. If you need to add support for a new
+"     grep command or a grep-like tool, it is just a matter of modifying a few
+"     internal variables and possibly adding a new set of commands.
 "   - On windows, setting multiple ID files for IDPATH doesn't work, so the
 "     plugin provides a workaround by running "lid" separately on each ID file
 "     if there are multiple ID files separated by ";" in the IDPATH.
@@ -115,8 +115,9 @@
 "     quickfix command.
 "
 "   General Syntax:
-"       <grep command> [<grep/lid options> ...] <regex/keyword>
-"                      [<filename patterns>] [+f <filter arguments> ...]
+"       <grep command> [<grep/lid/find options> ...] <regex/keyword>
+"                      [<filename patterns>/<more options>]
+"                      [+f <filter arguments> ...]
 "
 "     Note that typically you have to pass in at least one filename pattern to
 "     grep/findstr where as you don't pass in any for lid.
@@ -165,6 +166,8 @@
 "       IDGrep main +f \.java
 "   - Run lid while filtering the lines that contain src.
 "       IDGrep main +f -v src
+"   - Find Java files starting with A and ending with z under src.
+"       Find src -iname A*z.java
 "
 "   - To search for the current word in all the files and filter the results
 "     not containing \.java in the grepped output. This will potentially
@@ -190,7 +193,8 @@
 "       g:greputilsVimGrepAddCmd, g:greputilsGrepCompMode,
 "       g:greputilsLidCompMode, g:greputilsFindCompMode,
 "       g:greputilsExpandCurWord, g:greputilsVimGrepSepChar,
-"       g:greputilsPreserveLastResults, g:greputilsPreviewCreateFolds
+"       g:greputilsPreserveLastResults, g:greputilsPreserveAllResults,
+"       g:greputilsPreviewCreateFolds
 "
 "     - Use g:greputilsLidcmd and g:greputilsFiltercmd to set the path/name to
 "       the lid and GNU or compatible find executable (defaults to "lid").
@@ -238,7 +242,9 @@
 "       window, which you can retrieve by doing an undo immediately after
 "       generating the new results, inside the preview window. If you don't
 "       like this, you can disable this feature by resetting
-"       g:greputilsPreserveLastResults setting.
+"       g:greputilsPreserveLastResults setting. You can instead set the
+"       g:greputilsPreserveAllResults to preserve all the changes done in the
+"       preview window, by user and the plugin itself.
 "     - While using the *pAdd commands (that add results to preview window),
 "       the individual set of results are folded together to be able to
 "       identify them better. You can disable this feature by resetting the
@@ -268,13 +274,13 @@ endif
 if !exists('loaded_genutils')
   runtime plugin/genutils.vim
 endif
-if !exists('loaded_genutils') || loaded_genutils < 115
+if !exists('loaded_genutils') || loaded_genutils < 118
   echomsg 'greputils: You need a newer version of genutils.vim plugin'
   finish
 endif
 let loaded_greputils=1
 
-" No error if not found.
+" No error if not found, but we need it during the initialization itself.
 if !exists('loaded_cmdalias')
   runtime plugin/cmdalias.vim
 endif
@@ -331,6 +337,10 @@ if !exists("g:greputilsPreserveLastResults")
   let g:greputilsPreserveLastResults = 1
 endif
 
+if !exists("g:greputilsPreserveAllResults")
+  let g:greputilsPreserveAllResults = 0
+endif
+
 if !exists("g:greputilsPreviewCreateFolds")
   let g:greputilsPreviewCreateFolds = 1
 endif
@@ -385,9 +395,9 @@ endif
 command! -range=% GNext :call s:GNextImpl(1, <line1>)
 command! -range=% GPrev :call s:GNextImpl(-1, <line1>)
 command! -count=0 GG :call s:GNextImpl(0, <count>)
-command! -count=0 GClose :call <SID>Gwindow(0, <count>)
-command! -count=0 GOpen :call <SID>Gwindow(1, <count>)
-command! -count=0 GWindow :call <SID>Gwindow(-1, <count>)
+command! -count=0 GClose :call <SID>GWindow(0, <count>)
+command! -count=0 GOpen :call <SID>GWindow(1, <count>)
+command! -count=0 GWindow :call <SID>GWindow(-1, <count>)
 command! -count=0 GrepPreview :call <SID>OpenGrepPreview(1, 0, <count>)
 command! -nargs=0 GrepPreviewSetup :call s:SetupPreviewWindow(<f-args>)
 
@@ -518,23 +528,32 @@ function! s:Grep(cmdType, preview, grepAdd, ...)
       let fileArgs = fileArgs.' '.s:EvalExpr(s:{cmdType}AddArgsExpr)
     endif
 
+    let _grepOpts = EscapeCommand('', grepOpts, fileArgs)
     let handleMultipleID = 0
     " On windows, we need to manually handle multiple ID files.
     if cmdType ==# 'lid' && OnMS()
-          \ && MvNumberOfElements($IDPATH, ';') > 1
-      if !MvContainsPattern(grepOpts, MvCrUnProtectedCharsPattern(' '), '-f')
-        let handleMultipleID = 1
-        call MvIterCreate($IDPATH, ';', 'GrepUtils')
+      if GetShellEnvType() == g:ST_WIN_CMD
+        let _grepOpts = grepOpts.' '.fileArgs
+      endif
+
+      if MvNumberOfElements($IDPATH, ';') > 1
+        if !MvContainsPattern(grepOpts, MvCrUnProtectedCharsPattern(' '), '-f')
+          let handleMultipleID = 1
+          call MvIterCreate($IDPATH, ';', 'GrepUtils')
+        endif
       endif
     endif
 
-    let grepOpts = EscapeCommand('', grepOpts, fileArgs)
-    let grepOpts = Escape(grepOpts, '%#!')
+    let grepOpts = Escape(_grepOpts, '%#!')
 
     while 1
       let addOpts = ''
       if handleMultipleID
-        let addOpts = EscapeCommand('', '-f '.MvIterNext('GrepUtils'), ' ')
+        if GetShellEnvType() == g:ST_WIN_CMD
+          let addOpts = '-f '.MvIterNext('GrepUtils')
+        else
+          let addOpts = EscapeCommand('', '-f '.MvIterNext('GrepUtils'), ' ')
+        endif
       endif
 
       if !a:preview
@@ -551,8 +570,7 @@ function! s:Grep(cmdType, preview, grepAdd, ...)
         call s:OpenGrepPreview(0, grepAdd, 0)
         " Just to make it look more authentic.
         let pathsep = exists('+shellslash')?(&shellslash?'/':'\'):'/'
-        echo '!'.cmd.' '.&shellredir.' '.
-              \ CleanupFileName($TMP).pathsep.'<temp file>'
+        echo '!'.cmd.' '.&shellredir.' '.$TMP.pathsep.'<temp file>'
         silent! exec 'read !'.cmd
         silent! 1delete _
         if v:shell_error
@@ -598,7 +616,7 @@ function! s:InitPreviewWindow(grepAdd, cmd, args)
   let s:prevCwd = getcwd()
   let s:prevCurHit = 1
   call SilentSubstitute("\<CR>$", "%s///e")
-  call SilentSubstitute('^\(\f\+\):\(\d\+\):', '%s//\1|\2|/e')
+  call SilentSubstitute('^\(\%(\f\| \)\+\):\(\d\+\):', '%s//\1|\2|/e')
   1put! ='Last grep command: '.a:cmd.' '.a:args
   setl ft=qf
   1
@@ -652,13 +670,16 @@ endfunction
 function! s:_VimGrep(grepAdd, vimWild, ...)
   let prvWinnr = bufwinnr(s:myBufNum)
   let curWinnr = winnr()
-  let curBufNr = bufnr('%')
   let previewWinSize = 0 " Default
   if a:vimWild ==# 'windo' && prvWinnr != -1
     " We should first close the preview window to avoid getting double
     " counted.
     let previewWinSize = winheight(prvWinnr)
     call CloseWindow(prvWinnr, 1)
+  else
+    " For bufdo and argdo, it is better to run the command in the preview
+    " window, just to avoid dealing with issues such as unsaved buffers.
+    call s:OpenGrepPreview(1, 0, previewWinSize)
   endif
   let arg = (a:0 > 0 ? a:1 : '')
   if g:greputilsExpandCurWord
@@ -669,22 +690,39 @@ function! s:_VimGrep(grepAdd, vimWild, ...)
         \ g:greputilsVimGrepSepChar
   echo cmd
   let _eventignore = &eventignore
+  let _hidden = &hidden
+  " If selectbuf is installed, then disable MRU list, as otherwise the list
+  " would make no sense after running a grep command.
+  if exists('g:loaded_selectbuf') && exists('*SBGet')
+    " CAUTION: We are accessing the internal state of selectbuf here, and so
+    " is very fragile.
+    let curMRUoption = SBGet('s:disableMRUlisting')
+    call SBSet('s:disableMRUlisting', 1)
+    let curDynUpdate = SBGet('s:enableDynUpdate')
+    " Optimizes the buffer switching.
+    call SBSet('s:enableDynUpdate', 0)
+  endif
   try
     set eventignore=all
+    set hidden
     call MarkActiveWindow()
     let result = GetVimCmdOutput(cmd.
-          \ 'echo expand("%").":".line(".").": ".getline(".")')
+          \ 'echo (expand("%")==""?"[No File]#".bufnr("%"):expand("%")).'.
+          \'":".line(".").": ".getline(".")')
     if v:errmsg != ''
       echohl ErrorMsg | echomsg v:errmsg | echohl None
       return
     endif
   finally
-    call RestoreActiveWindow()
-    let &eventignore = _eventignore
-    if winnr() == curWinnr && bufnr('%') != curBufNr
-      " Restore the buffer in the current window.
-      exec 'buffer' curBufNr
+    if exists('g:loaded_selectbuf') && exists('*SBGet')
+      call SBSet('s:enableDynUpdate', curDynUpdate )
+      call SBSet('s:disableMRUlisting', curMRUoption )
     endif
+    call RestoreActiveWindow()
+    let &hidden = _hidden
+    let &eventignore = _eventignore
+    " Switch back to the preview buffer.
+    exec 'buffer' s:myBufNum
   endtry
   call s:OpenGrepPreview(0, a:grepAdd, previewWinSize)
   keepjumps silent! $put =result
@@ -716,7 +754,6 @@ function! s:SubCmdType(cmdType)
 endfunction
 
 function! s:GrepCfile(cmd, useBang, ...)
-  let curWinNr = winnr()
   if a:0 > 0 && a:1 != '' " Happens for <q-args>
     exec a:cmd.(a:useBang?'!':'') a:1
   else
@@ -726,7 +763,7 @@ function! s:GrepCfile(cmd, useBang, ...)
     let _cpo = &cpo
     try
       set undolevels=2 " Make sure we can at least undo the below change.
-      call SilentSubstitute('^\(\f\+\)|\(\d\+\)|', '%s//\1:\2:/e')
+      call SilentSubstitute('^\(\%(\f\| \)\+\)|\(\d\+\)|', '%s//\1:\2:/e')
       silent! 1delete _
       if line('$') == 1 && getline(1) =~ '^\s*$'
         undo | undo
@@ -766,7 +803,7 @@ function! s:GrepCfile(cmd, useBang, ...)
 endfunction
 
 " type: 0: close, 1: open, -1: toggle
-function! s:Gwindow(type, size)
+function! s:GWindow(type, size)
   let previewWinNr = bufwinnr(s:myBufNum)
   if previewWinNr != -1 && a:type == 1
     return
@@ -778,7 +815,7 @@ function! s:Gwindow(type, size)
   call s:OpenGrepPreview(1, 0, a:size)
   let open = ((a:type == -1) ? (previewWinNr == -1) : a:type)
   if ! open
-    close
+    call CloseWinNoEa(winnr(), 1)
     if winbufnr(orgWinNr) != orgBufNr
       let orgWinNr = bufwinnr(orgBufNr)
     endif
@@ -792,31 +829,28 @@ function! s:OpenGrepPreview(reopen, grepAdd, size)
   let wasVisible = 0
   let _isf = &isfname
   let _splitbelow = &splitbelow
-  let _equalalways = &equalalways
   set splitbelow
-  set noequalalways
   try
     if s:myBufNum == -1
       " Temporarily modify isfname to avoid treating the name as a pattern.
       set isfname-=\
       set isfname-=[
       if exists('+shellslash')
-        exec "sp \\\\". escape(s:title, ' ')
+        call OpenWinNoEa("sp \\\\". escape(s:title, ' '))
       else
-        exec "sp \\". escape(s:title, ' ')
+        call OpenWinNoEa("sp \\". escape(s:title, ' '))
       endif
       let s:myBufNum = bufnr('%')
     else
       let previewWinNr = bufwinnr(s:myBufNum)
       if previewWinNr == -1
-        exec 'sb '. s:myBufNum
+        call OpenWinNoEa('sb '. s:myBufNum)
       else
         let wasVisible = 1
         exec previewWinNr 'wincmd w'
       endif
     endif
   finally
-    let &equalalways = _equalalways
     let &isfname = _isf
     let &splitbelow = _splitbelow
   endtry
@@ -835,7 +869,7 @@ function! s:OpenGrepPreview(reopen, grepAdd, size)
         " Create fold for the first results.
         silent! 2,.fold
       endif
-    else
+    elseif ! g:greputilsPreserveAllResults
       let _curText = ''
       if g:greputilsPreserveLastResults
         " FIXME: We need to really save and restore both unnamed and 0
@@ -858,6 +892,8 @@ function! s:OpenGrepPreview(reopen, grepAdd, size)
         exec "normal! i\<C-G>u\<Esc>"
         silent! 1,$delete _
       endif
+    else
+      silent! 1,$delete _
     endif
   endif
 endfunction
@@ -920,22 +956,33 @@ function! s:GNextImpl(forward, cnt)
   exec newHit
   let fileName = ''
   let lineNr = 1
-  silent! exec substitute(getline('.'), '^\(\f\+\)|\(\d\+\)|.*',
+  silent! exec substitute(getline('.'), '^\(\%(\f\| \)\+\)|\(\d\+\)|.*',
         \ "let fileName='\\1' | let lineNr='\\2'", '')
   if fileName != ''
     if !filereadable(fileName)
       let fileName = s:prevCwd.((exists('+shellslash') && !&shellslash)?'\':'/')
             \ . fileName
       if !filereadable(fileName)
-        echohl ErrorMsg | echo "Can't read file: " . fileName | echohl NONE
-        return
+        if fileName =~# '\[No File\]#\d\+$'
+          " Buffer number in this case.
+          let fileName = matchstr(fileName, '\d\+$') + 0
+        else
+          echohl ErrorMsg | echo "Can't read file: " . fileName | echohl NONE
+          return
+        endif
       endif
     endif
 
     let s:prevCurHit = newHit
     call s:MarkCcLine()
     if NumberOfWindows() == 1
-      exec 'split +'.lineNr fileName
+      if !type(fileName) " If buffer number
+        split
+        exec 'buffer' fileName
+        exec lineNr
+      else
+        exec 'split +'.lineNr fileName
+      endif
     else
       let winnr = bufwinnr(fileName)
       let v:errmsg = ''
@@ -950,7 +997,11 @@ function! s:GNextImpl(forward, cnt)
             split
           endif
         endif
-        exec 'edit' fileName
+        if !type(fileName) " If buffer number
+          exec 'buffer' fileName
+        else
+          exec 'edit' fileName
+        endif
       endif
       if v:errmsg == ''
         exec lineNr
