@@ -1,0 +1,189 @@
+This is a mirror of http://www.vim.org/scripts/script.php?script_id=1062
+
+Derived from my original idutils.vim, this script is a lot more powerful and useful than ever. The commands that make use of Vim built-in grep are especially useful and unique (thanks to Tim Chase for the idea).
+
+  - There are many plugins that wrap the Vim built-in :grep command and try
+    to simplify the usage. However this plugin aims at providing two
+    specific features:
+        - Escape the arguments such that the arguments can be passed to the
+          external grep/lid/find literally. This avoids unwanted
+          interpretations by the shell, thus allowing you to concentrate on
+          the regular expression patterns rather than how to escape them.
+          This has been tested well on both windows and UNIX with
+          sh/bash/cmd as command shells.
+        - Allow you to preview the results before letting Vim handle them as
+          part of quickfix. This, besides allowing you to further filter the
+          results, also prevents Vim from adding buffers for files that are
+          uninteresting and thus help reduce the number of buffers. It also
+          supports basic quickfix commands that can be used to open a buffer 
+          without needing to convert it to a quickfix window. You can
+          consider it as a lightweight quickfix window. The preview window
+          is also great if you just want to take a peak at the results, not
+          really navigate them (such as to get an estimate of where all a
+          reference is found).
+    - Also provides commands to run the Vim built-in :g/re/p on multiple
+      buffers using :argdo, :bufdo and :windo commands and redirect the
+      output to the grep-results preview window. You can then convert the
+      results to a quickfix window, or use the preview window to navigate.
+    - As a bonus, the plugin also works around Vim problem with creating a
+      number of unnamed buffers as you close and open quickfix window
+      several times. This helps keep buffer list uncluttered.
+                                                                              
+  - The command merely wraps the built-in :grep, :grepadd, :cfile and
+    :cgetfile commands to create the quickfix list. The rest of the quickfix
+    commands work just like they do on the quickfix results created by using
+    only the built-in functionality. This also means that the plugin assume
+    that you have the options such as 'grepprg', 'shellpipe' are properly
+    set. Read the help on quickfix for the full list of commands and options
+    that you have.
+                                                                              
+      :h quickfix 
+                                                                              
+  - Other than the preview functionality which enables filtering, the plugin
+    also provides an easy way to specify a number of filter commands that
+    you can chain on the output of the grep/lid/find, each prefixed with
+    "+f". The arguments to the filter command are themselves escaped, the
+    same way as the grep command arguments as described above.
+  - Supports GNU "grep" and MS Windows "findstr" for running "find-in-file"
+    kind of searches, id-utils "lid" for running index searches, and GNU
+    "find" to search for file names. If you need to add support for a new
+    grep command or a grep-like tool, it is just a matter of modifying a few
+    internal variables and possibly adding a new set of commands.
+  - On windows, setting multiple ID files for IDPATH doesn't work, so the
+    plugin provides a workaround by running "lid" separately on each ID file
+    if there are multiple ID files separated by ";" in the IDPATH.
+  - Make sure that the 'grepprg' and 'shellpipe' options are properly set
+    and that the built-in :grep itself works. For GNU id-utils, make sure
+    IDPATH environmental variable is set or path to the ID file is specified
+    with the "-f" argument in the g:greputilsLidcmd setting. You can also
+    specify the "-f ID" arguments to the :IDGrep command.
+  - Uses EscapeCommand() function from genutils.vim plugin that supports
+    Cygwin "bash", MS Windows "cmd" and Unix "sh" for shell escaping. Other
+    environments are untested.
+  - Defines the following commands:
+                                                                              
+      Grep, GrepAdd, IDGrep, IDGrepAdd, Find, FindAdd
+      Grepp, GreppAdd, IDGrepp, IDGreppAdd, Findp, FindpAdd
+                                                                              
+    The second set of commands are used to open the results in a preview
+    window instead of directly in the quickfix window. And those that have a
+    suffix of "Add" add the new list of results to the existing list,
+    instead of replacing them (just like in :grepadd). This can be very
+    useful in combination with the preview commands.
+                                                                              
+    You can open the preview window at anytime using GrepPreview command.
+    Once you are in the preview window, you can filter the results using the
+    regular Vim commands, and when you would like to browse the results
+    using Vim quickfix commands, just use Cfile and Cgetfile commands, which
+    are functionally equivalent to the built-in cfile and cgetfile commands
+    respectively, except that they don't take a filename as argument use the
+    current preview window contents to create the error-list. There are
+    also, GOpen, GClose and GWindow commands defined on the lines of copen,
+    cclose and cwindow respectively.
+                                                                              
+    Use the GrepPreviewSetup command to convert an arbitrary buffer
+    containing :grep output as a preview window. This is useful to take
+    advantage of the quickfix like functionality that the plugin provides on
+    grep results generated by your own commands.
+                                                                              
+    If cmdalias.vim is installed, it also creates aliases for the Grep,
+    GrepAdd, Cfile and Cgetfile commands to the corresponding built-in
+    commands, i.e., grep, grepadd, cfile and cgetfile respectively.
+                                                                              
+    The preview window supports the following commands:
+      preview command     quickfix command ~
+      GG [count]          cc [count]
+      [count]GNext        [count]cnext
+      [count]GPrev        [count]cNext, cprevious
+      <CR>                <CR>
+      <2-LeftMouse>       <2-LeftMouse>
+                                                                              
+    The commands supports [count] argument just like the corresponding
+    quickfix command.
+                                                                              
+  General Syntax:
+      <grep command> [<grep/lid/find options> ...] <regex/keyword>
+                     [<filename patterns>/<more options>]
+                     [+f <filter arguments> ...]
+                                                                              
+    Note that typically you have to pass in at least one filename pattern to
+    grep/findstr where as you don't pass in any for lid.
+  - Also defines the following commands:
+                                                                              
+      ArgGrep, ArgGrepAdd, BufGrep, BufGrepAdd, WinGrep, WinGrepAdd
+                                                                              
+    You can use the above commands to run Vim's built-in g/re/p command to
+    find matches across buffers loaded in the current session, without
+    needing any external tools. Each of the above commands (and their "Add"
+    variants), run g/re/p command on a bunch of buffers loaded using one of
+    :argdo, :bufdo and :windo commands respectively. These commands are
+    designed to always open the results in the preview window. If you like,
+    you can convert it to a quickfix result, by using :Cfile or :Cgetfile
+    command.
+                                                                              
+  General Syntax:
+      [range]<Arg|Buf|Win>Grep[Add] [<pattern>]
+                                                                              
+    If you don't specify a pattern, the current value in search register
+    (@/) will be used, which essentially means that the last search pattern
+    will be used. See also g:greputilsVimGrepSepChar setting under
+    installation section.
+                                                                              
+    The range, if not specified, defaults to all the lines in all the
+    applicable buffers. If you explicitly specify a range, please note that
+    a range such as "%" or "1,$" is translated to the absolute line numbers
+    with reference to the current buffer by Vim itself, so it is not the
+    same as not specifying at all. This means, if there are 100 lines in the
+    current buffer, specifying "%" or "1,$" is equivalent to specifying
+    "1,100" as the range. The range is more useful with the "GrepBufs"
+    command mentioned below.
+  - Also defines "GrepBufs" command that can be used to grep for a Vim
+    regular expression pattern in the specified set of buffers (or the
+    current buffer). If no pattern is specified it will default to the
+    current search pattern. Buffers can be specified by name (see :h
+    bufname()) or by their number using the #<bufno> notation. You can also
+    complete the buffer names by using the completion character (<Tab>).
+                                                                              
+  General Syntax:
+      [range]GrepBufs[Add] [pattern] [buffer ...]
+                                                                              
+    This by syntax is very close to the Unix grep command. The main
+    difference being that it uses Vim regex and it searches the buffers
+    already loaded instead of those on the file system.
+                                                                              
+    The range has same semantics as for any of the "arg", "buf" or "win" grep
+    commands, but it is more useful here while limiting the grep for one
+    buffer alone.
+                                                                              
+Examples:
+  The following examples assume that you are using GNU grep for both the
+  'grepprg' and as the g:greputilsFiltercmd.
+                                                                              
+  - Run GNU grep from the directory of the current file recursively while
+    limiting the search only for Java files.
+      Grep -r --include=*.java \<main\> %:h
+  - Run lid while filtering the lines that are not from Java source.
+      IDGrep main +f \.java
+  - Run lid while filtering the lines that contain src.
+      IDGrep main +f -v src
+  - Find Java files starting with A and ending with z under src.
+      Find src -iname A*z.java
+                                                                              
+  - To search for the current word in all the files and filter the results
+    not containing \.java in the grepped output. This will potentially
+    return all the occurences in the java files only. 
+      IDGrep <cword> +f \.java 
+                                                                              
+  - If any argument contains spaces, then you need to protect them by
+    prefixing them with a backslash.  The following will filter those lines
+    that don't contain "public static".
+      IDGrep <cword> +f public\ static
+                                                                              
+  - Run ":bufdo g/public static/p" and show output in preview window:
+      BufGrep public\ static
+
+
+
+
+
+Search_key_words: idutils greputils greputil id-utils gnu id grep gid mkid lid windo argdo bufdo Hari Krishna Dara
