@@ -2,9 +2,9 @@
 " Author: Hari Krishna (hari_vim at yahoo dot com)
 " Last Change: 10-Aug-2004 @ 20:37
 " Created:     10-Jun-2004 from idutils.vim
-" Requires: Vim-6.3, genutils.vim(1.13), multvals.vim(3.6)
+" Requires: Vim-6.3, genutils.vim(1.15), multvals.vim(3.6)
 " Depends On: cmdalias.vim(1.0)
-" Version: 2.3.0
+" Version: 2.4.0
 " Acknowledgements:
 "   - gumnos (Tim Chase) (gumnos at hotmail dot com) for the idea of
 "     capturing the g/re/p output and using it as a simple grep. The
@@ -21,25 +21,34 @@
 "         - Escape the arguments such that the arguments can be passed to the
 "           external grep/lid literally. This avoids unwanted interpretations
 "           by the shell, thus allowing you to concentrate on the regular
-"           expression patterns rather than how to escape them.
+"           expression patterns rather than how to escape them. This has been
+"           tested well on both windows and UNIX with sh/bash/cmd as command
+"           shells.
 "         - Allow you to preview the results before letting Vim handle them as
 "           part of quickfix. This, besides allowing you to further filter the
 "           results, also prevents Vim from adding buffers for files that are
 "           uninteresting and thus help reduce the number of buffers. It also
 "           supports basic quickfix commands that can be used to open a buffer 
 "           without needing to convert it to a quickfix window. You can
-"           consider it as a lightweight quickfix window.
+"           consider it as a lightweight quickfix window. The preview window
+"           is also great if you just want to take a peak at the results, not
+"           really navigate them (such as to get an estimate of where all a
+"           reference is found).
+"     - Also provides commands to run the Vim built-in :g/re/p on multiple
+"       buffers using :argdo, :bufdo and :windo commands and redirect the
+"       output to the grep-results preview window. You can then convert the
+"       results to a quickfix window, or use the preview window to navigate.
 "     - As a bonus, the plugin also works around Vim problem with creating a
 "       number of unnamed buffers as you close and open quickfix window
 "       several times. This helps keep buffer list uncluttered.
 "
-"   - The command merely wraps the built-in :grep, :grepadd and :cfile
-"     commands to create the quickfix list. The rest of the quickfix commands
-"     work just like they do on the quickfix results created by using only the
-"     built-in functionality. This also means that the plugin assume that you
-"     have the options such as 'grepprg', 'shellpipe' are properly set. Read
-"     the help on quickfix for the full list of commands and options that you
-"     have.
+"   - The command merely wraps the built-in :grep, :grepadd, :cfile and
+"     :cgetfile commands to create the quickfix list. The rest of the quickfix
+"     commands work just like they do on the quickfix results created by using
+"     only the built-in functionality. This also means that the plugin assume
+"     that you have the options such as 'grepprg', 'shellpipe' are properly
+"     set. Read the help on quickfix for the full list of commands and options
+"     that you have.
 "
 "       :h quickfix 
 "
@@ -81,7 +90,9 @@
 "     using Vim quickfix commands, just use Cfile and Cgetfile commands, which
 "     are functionally equivalent to the built-in cfile and cgetfile commands
 "     respectively, except that they don't take a filename as argument use the
-"     current preview window contents to create the error-list.
+"     current preview window contents to create the error-list. There are
+"     also, GOpen, GClose and GWindow commands defined on the lines of copen,
+"     cclose and cwindow respectively.
 "
 "     Use the GrepPreviewSetup command to convert an arbitrary buffer
 "     containing :grep output as a preview window. This is useful to take
@@ -129,6 +140,19 @@
 "     (@/) will be used, which essentially means that the last search pattern
 "     will be used. See also g:greputilsVimGrepSepChar setting under
 "     installation section.
+"   - Also defines "GrepBufs" command that can be used to grep for a Vim
+"     regular expression pattern in the specified set of buffers (or the
+"     current buffer). If no pattern is specified it will default to the
+"     current search pattern. Buffers can be specified by name (see :h
+"     bufname()) or by their number using the #<bufno> notation. You can also
+"     complete the buffer names by using the completion character (<Tab>).
+"
+"   General Syntax:
+"       GrepBufs[Add] [pattern] [buffer ...]
+"
+"     This by syntax is very close to the Unix grep command. The main
+"     difference being that it uses Vim regex and it searches the buffers
+"     already loaded instead of those on the file system.
 "
 " Examples:
 "   The following examples assume that you are using GNU grep for both the
@@ -157,9 +181,10 @@
 "
 " Installation:
 "   - Drop the file in your plugin directory or source it from your vimrc.
-"   - Make sure genutils.vim and multvals.vim are also installed.
+"   - Requires genutils (vimscript#197) and multvals (vimscript #171) plugins
+"     also to be installed.
 "
-"   Settings:
+"   Optional Settings:
 "       g:greputilsLidcmd, g:greputilsFindcmd, g:greputilsFiltercmd,
 "       g:greputilsFindMsgFmt, g:greputilsAutoCopen, g:greputilsVimGrepCmd,
 "       g:greputilsVimGrepAddCmd, g:greputilsGrepCompMode,
@@ -219,6 +244,7 @@
 "       identify them better. You can disable this feature by resetting the
 "       g:greputilsPreviewCreateFolds setting.
 " TODO:
+"   - Is it useful to accept a range for GrepBufs command?
 "   - Restoring the unnamed and 0 registers doesn't work cleanly.
 "   - Can we implement custom completion to support both tag and filenames?
 "   - Is it possible that I am setting 'winfixheight' on a wrong window?
@@ -242,7 +268,7 @@ endif
 if !exists('loaded_genutils')
   runtime plugin/genutils.vim
 endif
-if !exists('loaded_genutils') || loaded_genutils < 113
+if !exists('loaded_genutils') || loaded_genutils < 115
   echomsg 'greputils: You need a newer version of genutils.vim plugin'
   finish
 endif
@@ -294,7 +320,7 @@ if !exists('g:greputilsFindCompMode')
 endif
 
 if !exists('g:greputilsExpandCurWord')
-  let g:greputilsExpandCurWord = 0
+  let g:greputilsExpandCurWord = 1
 endif
 
 if !exists('g:greputilsVimGrepSepChar')
@@ -346,14 +372,24 @@ command! -nargs=? -complete=tag BufGrepAdd
 command! -nargs=? -complete=tag ArgGrep :call <SID>VimGrep(0, 'argdo', <q-args>)
 command! -nargs=? -complete=tag ArgGrepAdd
       \ :call <SID>VimGrep(1, 'argdo', <q-args>)
+command! -nargs=* -complete=buffer GrepBufs :call <SID>GrepBuffers(0, <f-args>)
+command! -nargs=* -complete=buffer GrepBufsAdd
+      \ :call <SID>GrepBuffers(1, <f-args>)
 
 if exists('*CmdAlias')
   call CmdAlias('grep', 'Grep')
   call CmdAlias('grepadd', 'GrepAdd')
 endif
 
+
+command! -range=% GNext :call s:GNextImpl(1, <line1>)
+command! -range=% GPrev :call s:GNextImpl(-1, <line1>)
+command! -count=0 GG :call s:GNextImpl(0, <count>)
+command! -count=0 GClose :call <SID>Gwindow(0, <count>)
+command! -count=0 GOpen :call <SID>Gwindow(1, <count>)
+command! -count=0 GWindow :call <SID>Gwindow(-1, <count>)
 command! -count=0 GrepPreview :call <SID>OpenGrepPreview(1, 0, <count>)
-command! -nargs=+ GrepPreviewSetup :call s:SetupPreviewWindow(<f-args>)
+command! -nargs=0 GrepPreviewSetup :call s:SetupPreviewWindow(<f-args>)
 
 if !exists('s:myBufNum')
 let s:myBufNum = -1
@@ -540,9 +576,13 @@ function! s:Grep(cmdType, preview, grepAdd, ...)
   endtry
 endfunction
 
-function! s:SetupPreviewWindow(cmd, args)
+function! s:SetupPreviewWindow(...)
+  if a:0 < 2
+    echohl ErrorMsg | echo 'Usage: GrepPreviewSetup <cmd> <args>' | echohl None
+    return
+  endif
   call s:SetupBuf()
-  call s:InitPreviewWindow(0, a:cmd, a:args)
+  call s:InitPreviewWindow(0, a:1, a:2)
 endfunction
 
 function! s:InitPreviewWindow(grepAdd, cmd, args)
@@ -551,7 +591,7 @@ function! s:InitPreviewWindow(grepAdd, cmd, args)
       call RestoreHardPosition('GrepUtils')
     endif
     if (line('$') - line('.') > 2) && (foldlevel('.') == 0)
-      silent! +,$fold
+      silent! .,$fold
     endif
   endif
 
@@ -565,6 +605,51 @@ function! s:InitPreviewWindow(grepAdd, cmd, args)
 endfunction
 
 function! s:VimGrep(grepAdd, vimWild, ...)
+  exec MakeArgumentString()
+  exec 'call s:_VimGrep(a:grepAdd, a:vimWild, ' argumentString.')'
+endfunction
+
+function! s:GrepBuffers(grepAdd, ...)
+  let pat = (a:0 && a:1 != ' ' ? a:1 : '')
+  let patArg = pat
+  if pat != ''
+    let patArg = QuoteStr(pat)
+  endif
+  let i = 2
+  let firstCall = 1
+  while 1
+    " Break if arguments were given, and we reached the end of the arguments.
+    " Don't break if no arguments were given, we need to loop at least once on
+    " the current buffer.
+    if ! exists('a:{i}') && a:0 > 1
+      break
+    endif
+
+    let cmd = ''
+    if exists('a:{i}')
+      let bufNr = (a:{i} =~ '^#\d\+') ? strpart(a:{i}, 1) : bufnr(a:{i})
+      if bufNr != -1
+        let cmd = 'buf ' . bufNr . '| '
+      endif
+    endif
+
+    " Doing an exec to avoid passing an empty pattern
+    " Do init for the last 
+    let lastCall = (a:0 <= 1 || i == a:0)
+    exec 'call s:_VimGrep(!firstCall || a:grepAdd, cmd, '.patArg.')'
+
+    let firstCall = 0
+    let i = i + 1
+    if i > a:0
+      break
+    endif
+  endwhile
+  exec MakeArgumentList('argumentList', ' ')
+  keepjumps call setline(1, substitute(getline(1), ':.*$', ': GrepBufs ' .
+        \ argumentList, ''))
+endfunction
+
+function! s:_VimGrep(grepAdd, vimWild, ...)
   let prvWinnr = bufwinnr(s:myBufNum)
   let curWinnr = winnr()
   let curBufNr = bufnr('%')
@@ -572,11 +657,8 @@ function! s:VimGrep(grepAdd, vimWild, ...)
   if a:vimWild ==# 'windo' && prvWinnr != -1
     " We should first close the preview window to avoid getting double
     " counted.
-    if curWinnr != prvWinnr
-      exec prvWinnr'wincmd w'
-    endif
-    let previewWinSize = winheight(winnr())
-    close
+    let previewWinSize = winheight(prvWinnr)
+    call CloseWindow(prvWinnr, 1)
   endif
   let arg = (a:0 > 0 ? a:1 : '')
   if g:greputilsExpandCurWord
@@ -589,12 +671,15 @@ function! s:VimGrep(grepAdd, vimWild, ...)
   let _eventignore = &eventignore
   try
     set eventignore=all
-    let result = GetVimCmdOutput(cmd.'echo expand("%").":".line(".").": ".getline(".")')
+    call MarkActiveWindow()
+    let result = GetVimCmdOutput(cmd.
+          \ 'echo expand("%").":".line(".").": ".getline(".")')
     if v:errmsg != ''
       echohl ErrorMsg | echomsg v:errmsg | echohl None
       return
     endif
   finally
+    call RestoreActiveWindow()
     let &eventignore = _eventignore
     if winnr() == curWinnr && bufnr('%') != curBufNr
       " Restore the buffer in the current window.
@@ -602,12 +687,14 @@ function! s:VimGrep(grepAdd, vimWild, ...)
     endif
   endtry
   call s:OpenGrepPreview(0, a:grepAdd, previewWinSize)
-  keepjumps silent! put =result
-  keepjumps silent! 1,2delete _
-  call SilentDelete('^E486:')
-  call SilentDelete('\d\+ lines, \d\+ characters$')
-  call SilentDelete('\d\+ lines --\d\+%--')
-  call SilentDelete('^$')
+  keepjumps silent! $put =result
+  keepjumps silent! delete _
+  call SilentDelete(',$', '^E486:')
+  call SilentDelete(',$', '\d\+ lines, \d\+ characters$')
+  call SilentDelete(',$', '\d\+ lines --\d\+%--')
+  call SilentDelete(',$', '^$')
+  " This either deletes the header or the empty line(first time).
+  keepjumps silent! 1delete _
   call s:InitPreviewWindow(a:grepAdd, '', cmd)
 endfunction
 
@@ -678,6 +765,29 @@ function! s:GrepCfile(cmd, useBang, ...)
   endif
 endfunction
 
+" type: 0: close, 1: open, -1: toggle
+function! s:Gwindow(type, size)
+  let previewWinNr = bufwinnr(s:myBufNum)
+  if previewWinNr != -1 && a:type == 1
+    return
+  elseif previewWinNr == -1 && a:type == 0
+    return
+  endif
+  let orgBufNr = bufnr('%')
+  let orgWinNr = winnr()
+  call s:OpenGrepPreview(1, 0, a:size)
+  let open = ((a:type == -1) ? (previewWinNr == -1) : a:type)
+  if ! open
+    close
+    if winbufnr(orgWinNr) != orgBufNr
+      let orgWinNr = bufwinnr(orgBufNr)
+    endif
+    if orgWinNr != -1
+      exec orgWinNr 'wincmd w'
+    endif
+  endif
+endfunction
+
 function! s:OpenGrepPreview(reopen, grepAdd, size)
   let wasVisible = 0
   let _isf = &isfname
@@ -697,12 +807,12 @@ function! s:OpenGrepPreview(reopen, grepAdd, size)
       endif
       let s:myBufNum = bufnr('%')
     else
-      let buffer_win = bufwinnr(s:myBufNum)
-      if buffer_win == -1
+      let previewWinNr = bufwinnr(s:myBufNum)
+      if previewWinNr == -1
         exec 'sb '. s:myBufNum
       else
         let wasVisible = 1
-        exec buffer_win . 'wincmd w'
+        exec previewWinNr 'wincmd w'
       endif
     endif
   finally
@@ -769,10 +879,6 @@ function! s:SetupBuf()
     call CmdAlias('cgetfile', 'Cgetfile', '<buffer>')
   endif
 
-  command! -buffer -range=1 GNext :call s:GNextImpl(1, <line1>)
-  command! -buffer -range=1 GPrev :call s:GNextImpl(-1, <line1>)
-  command! -buffer -count=0 GG :call s:GNextImpl(0, <count>)
-
   nnoremap <buffer> <silent> <CR> :GG<CR>
   nnoremap <buffer> <silent> <2-LeftMouse> :GG<CR>
   nnoremap <buffer> <silent> <C-N> :GNext<CR>
@@ -790,9 +896,18 @@ function! s:MarkCcLine()
 endfunction
 
 function! s:GNextImpl(forward, cnt)
+  let previewWinNr = bufwinnr(s:myBufNum)
+  let previewWasVisible = 1
+  if previewWinNr == -1
+    let previewWasVisible = 0
+    call s:OpenGrepPreview(1, 0, 0)
+    let previewWinNr = bufwinnr(s:myBufNum)
+  elseif winnr() != previewWinNr
+    exec previewWinNr 'wincmd w'
+  endif
   if a:forward == 0
-    " Calculate absolution error.
-    let newHit = (a:cnt > 0) ? (a:cnt+1) : line('.')
+    " Calculate absolute error.
+    let newHit = (a:cnt> 0) ? (a:cnt+1) : line('.')
   else
     " Calculate relative error.
     let newHit = s:prevCurHit + (a:forward * a:cnt)
@@ -823,6 +938,7 @@ function! s:GNextImpl(forward, cnt)
       exec 'split +'.lineNr fileName
     else
       let winnr = bufwinnr(fileName)
+      let v:errmsg = ''
       if winnr != -1
         exec winnr.'wincmd w'
       else
@@ -830,11 +946,19 @@ function! s:GNextImpl(forward, cnt)
           split
         else
           wincmd p
+          if winnr() == previewWinNr
+            split
+          endif
         endif
         exec 'edit' fileName
       endif
-      exec lineNr
+      if v:errmsg == ''
+        exec lineNr
+      endif
     endif
+  endif
+  if ! previewWasVisible
+    call CloseWindow(previewWinNr, 1)
   endif
 endfunction
 
