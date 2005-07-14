@@ -1,10 +1,10 @@
 " greputils.vim -- Interface with grep and id-utils.
 " Author: Hari Krishna (hari_vim at yahoo dot com)
-" Last Change: 21-Mar-2005 @ 12:27
+" Last Change: 14-Jul-2005 @ 15:57
 " Created:     10-Jun-2004 from idutils.vim
 " Requires: Vim-6.3, genutils.vim(1.18), multvals.vim(3.6)
 " Depends On: cmdalias.vim(1.0)
-" Version: 2.6.0
+" Version: 2.7.0
 " Acknowledgements:
 "   - gumnos (Tim Chase) (gumnos at hotmail dot com) for the idea of
 "     capturing the g/re/p output and using it as a simple grep. The
@@ -794,6 +794,7 @@ function! s:SubCmdType(cmdType)
 endfunction
 
 function! s:GrepCfile(cmd, useBang, ...)
+  let curWinNr = winnr()
   if a:0 > 0 && a:1 != '' " Happens for <q-args>
     exec a:cmd.(a:useBang?'!':'') a:1
   else
