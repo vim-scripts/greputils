@@ -1,10 +1,10 @@
 " greputils.vim -- Interface with grep and id-utils.
 " Author: Hari Krishna (hari_vim at yahoo dot com)
-" Last Change: 14-Mar-2005 @ 20:22
+" Last Change: 21-Mar-2005 @ 12:27
 " Created:     10-Jun-2004 from idutils.vim
 " Requires: Vim-6.3, genutils.vim(1.18), multvals.vim(3.6)
 " Depends On: cmdalias.vim(1.0)
-" Version: 2.5.3
+" Version: 2.6.0
 " Acknowledgements:
 "   - gumnos (Tim Chase) (gumnos at hotmail dot com) for the idea of
 "     capturing the g/re/p output and using it as a simple grep. The
@@ -135,12 +135,21 @@
 "     command.
 "
 "   General Syntax:
-"       <Arg|Buf|Win>Grep[Add] [<pattern>]
+"       [range]<Arg|Buf|Win>Grep[Add] [<pattern>]
 "
 "     If you don't specify a pattern, the current value in search register
 "     (@/) will be used, which essentially means that the last search pattern
 "     will be used. See also g:greputilsVimGrepSepChar setting under
 "     installation section.
+"
+"     The range, if not specified, defaults to all the lines in all the
+"     applicable buffers. If you explicitly specify a range, please note that
+"     a range such as "%" or "1,$" is translated to the absolute line numbers
+"     with reference to the current buffer by Vim itself, so it is not the
+"     same as not specifying at all. This means, if there are 100 lines in the
+"     current buffer, specifying "%" or "1,$" is equivalent to specifying
+"     "1,100" as the range. The range is more useful with the "GrepBufs"
+"     command mentioned below.
 "   - Also defines "GrepBufs" command that can be used to grep for a Vim
 "     regular expression pattern in the specified set of buffers (or the
 "     current buffer). If no pattern is specified it will default to the
@@ -149,11 +158,15 @@
 "     complete the buffer names by using the completion character (<Tab>).
 "
 "   General Syntax:
-"       GrepBufs[Add] [pattern] [buffer ...]
+"       [range]GrepBufs[Add] [pattern] [buffer ...]
 "
 "     This by syntax is very close to the Unix grep command. The main
 "     difference being that it uses Vim regex and it searches the buffers
 "     already loaded instead of those on the file system.
+"
+"     The range has same semantics as for any of the "arg", "buf" or "win" grep
+"     commands, but it is more useful here while limiting the grep for one
+"     buffer alone.
 "
 " Examples:
 "   The following examples assume that you are using GNU grep for both the
@@ -285,6 +298,11 @@ if !exists('loaded_cmdalias')
   runtime plugin/cmdalias.vim
 endif
 
+" Make sure line-continuations won't cause any problem. This will be restored
+"   at the end
+let s:save_cpo = &cpo
+set cpo&vim
+
 if !exists('g:greputilsLidcmd')
   let g:greputilsLidcmd = 'lid'
 endif
@@ -373,18 +391,31 @@ exec 'command! -nargs=+ -complete='.g:greputilsFindCompMode
 exec 'command! -nargs=+ -complete='.g:greputilsFindCompMode
       \ 'FindpAdd call <SID>Grep("find", 1, 1, <f-args>)'
 
-command! -nargs=? -complete=tag WinGrep :call <SID>VimGrep(0, 'windo', <q-args>)
-command! -nargs=? -complete=tag WinGrepAdd
-      \ :call <SID>VimGrep(1, 'windo', <q-args>)
-command! -nargs=? -complete=tag BufGrep :call <SID>VimGrep(0, 'bufdo', <q-args>)
-command! -nargs=? -complete=tag BufGrepAdd
-      \ :call <SID>VimGrep(1, 'bufdo', <q-args>)
-command! -nargs=? -complete=tag ArgGrep :call <SID>VimGrep(0, 'argdo', <q-args>)
-command! -nargs=? -complete=tag ArgGrepAdd
-      \ :call <SID>VimGrep(1, 'argdo', <q-args>)
-command! -nargs=* -complete=buffer GrepBufs :call <SID>GrepBuffers(0, <f-args>)
-command! -nargs=* -complete=buffer GrepBufsAdd
-      \ :call <SID>GrepBuffers(1, <f-args>)
+" We translate the default range to mean '%', otherwise, the range will get
+" fixed to the current buffer's range.
+command! -range -nargs=? -complete=tag WinGrep
+      \ :call <SID>VimGrep(<line1>, <line2>, 0, 'windo', <q-args>)
+command! -range -nargs=? -complete=tag WinGrepAdd
+      \ :call <SID>VimGrep(<line1>, <line2>, 1, 'windo', <q-args>)
+command! -range -nargs=? -complete=tag BufGrep
+      \ :call <SID>VimGrep(<line1>, <line2>, 0, 'bufdo', <q-args>)
+command! -range -nargs=? -complete=tag BufGrepAdd
+      \ :call <SID>VimGrep(<line1>, <line2>, 1, 'bufdo', <q-args>)
+command! -range -nargs=? -complete=tag ArgGrep
+      \ :call <SID>VimGrep(<line1>, <line2>, 0, 'argdo', <q-args>)
+command! -range -nargs=? -complete=tag ArgGrepAdd
+      \ :call <SID>VimGrep(<line1>, <line2>, 1, 'argdo', <q-args>)
+command! -range -nargs=* -complete=buffer GrepBufs
+      \ :call <SID>GrepBuffers(<line1>, <line2>, 0, <f-args>)
+command! -range -nargs=* -complete=buffer GrepBufsAdd
+      \ :call <SID>GrepBuffers(<line1>, <line2>, 1, <f-args>)
+
+if (! exists("no_plugin_maps") || ! no_plugin_maps) &&
+      \ (! exists("no_greputils_maps") || ! no_greputils_maps)
+  if !hasmapto('\gwin', 'n')
+    nnoremap <silent> \gwin :GWindow<CR>
+  endif
+endif
 
 if exists('*CmdAlias')
   call CmdAlias('grep', 'Grep')
@@ -622,12 +653,13 @@ function! s:InitPreviewWindow(grepAdd, cmd, args)
   1
 endfunction
 
-function! s:VimGrep(grepAdd, vimWild, ...)
+function! s:VimGrep(fline, lline, grepAdd, vimWild, ...)
   exec MakeArgumentString()
-  exec 'call s:_VimGrep(a:grepAdd, a:vimWild, ' argumentString.')'
+  exec 'call s:_VimGrep(a:fline, a:lline, a:grepAdd, a:vimWild, '
+        \ argumentString.')'
 endfunction
 
-function! s:GrepBuffers(grepAdd, ...)
+function! s:GrepBuffers(fline, lline, grepAdd, ...)
   let pat = (a:0 && a:1 != ' ' ? a:1 : '')
   let patArg = pat
   if pat != ''
@@ -654,7 +686,8 @@ function! s:GrepBuffers(grepAdd, ...)
     " Doing an exec to avoid passing an empty pattern
     " Do init for the last 
     let lastCall = (a:0 <= 1 || i == a:0)
-    exec 'call s:_VimGrep(!firstCall || a:grepAdd, cmd, '.patArg.')'
+    exec 'call s:_VimGrep(fline, lline, !firstCall || a:grepAdd, cmd, '.
+          \ patArg.')'
 
     let firstCall = 0
     let i = i + 1
@@ -667,7 +700,14 @@ function! s:GrepBuffers(grepAdd, ...)
         \ argumentList, ''))
 endfunction
 
-function! s:_VimGrep(grepAdd, vimWild, ...)
+function! s:_VimGrep(fline, lline, grepAdd, vimWild, ...)
+  if a:fline == a:lline && a:fline == line('.')
+    let fline = '1'
+    let lline = '$'
+  else
+    let fline = a:fline
+    let lline = a:lline
+  endif
   let prvWinnr = bufwinnr(s:myBufNum)
   let curWinnr = winnr()
   let previewWinSize = 0 " Default
@@ -686,7 +726,7 @@ function! s:_VimGrep(grepAdd, vimWild, ...)
     " Expand <cword> and <cWORD>.
     let arg = substitute(arg, '<cword>\|<cWORD>', '\=expand(submatch(0))', 'g')
   endif
-  let cmd = a:vimWild.' '.'g'.g:greputilsVimGrepSepChar.arg.
+  let cmd = a:vimWild.' '.fline.','.lline.'g'.g:greputilsVimGrepSepChar.arg.
         \ g:greputilsVimGrepSepChar
   echo cmd
   let _eventignore = &eventignore
@@ -1086,5 +1126,9 @@ function! s:RegisterQuickfixBuf(bufNr)
 
   let s:curQuickFixBufs = MvAddElement(s:curQuickFixBufs, ' ', a:bufNr)
 endfunction
+
+" Restore cpo.
+let &cpo = s:save_cpo
+unlet s:save_cpo
 
 " vim6:fdm=marker sw=2 et
