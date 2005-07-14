@@ -1,10 +1,10 @@
 " greputils.vim -- Interface with grep and id-utils.
 " Author: Hari Krishna (hari_vim at yahoo dot com)
-" Last Change: 14-Jul-2005 @ 15:57
+" Last Change: 14-Jul-2005 @ 18:18
 " Created:     10-Jun-2004 from idutils.vim
 " Requires: Vim-6.3, genutils.vim(1.18), multvals.vim(3.6)
 " Depends On: cmdalias.vim(1.0)
-" Version: 2.7.0
+" Version: 2.8.0
 " Acknowledgements:
 "   - gumnos (Tim Chase) (gumnos at hotmail dot com) for the idea of
 "     capturing the g/re/p output and using it as a simple grep. The
@@ -393,22 +393,22 @@ exec 'command! -nargs=+ -complete='.g:greputilsFindCompMode
 
 " We translate the default range to mean '%', otherwise, the range will get
 " fixed to the current buffer's range.
-command! -range -nargs=? -complete=tag WinGrep
-      \ :call <SID>VimGrep(<line1>, <line2>, 0, 'windo', <q-args>)
-command! -range -nargs=? -complete=tag WinGrepAdd
-      \ :call <SID>VimGrep(<line1>, <line2>, 1, 'windo', <q-args>)
-command! -range -nargs=? -complete=tag BufGrep
-      \ :call <SID>VimGrep(<line1>, <line2>, 0, 'bufdo', <q-args>)
-command! -range -nargs=? -complete=tag BufGrepAdd
-      \ :call <SID>VimGrep(<line1>, <line2>, 1, 'bufdo', <q-args>)
-command! -range -nargs=? -complete=tag ArgGrep
-      \ :call <SID>VimGrep(<line1>, <line2>, 0, 'argdo', <q-args>)
-command! -range -nargs=? -complete=tag ArgGrepAdd
-      \ :call <SID>VimGrep(<line1>, <line2>, 1, 'argdo', <q-args>)
-command! -range -nargs=* -complete=buffer GrepBufs
-      \ :call <SID>GrepBuffers(<line1>, <line2>, 0, <f-args>)
-command! -range -nargs=* -complete=buffer GrepBufsAdd
-      \ :call <SID>GrepBuffers(<line1>, <line2>, 1, <f-args>)
+command! -range -bang -nargs=? -complete=tag WinGrep
+      \ :call <SID>VimGrep(<line1>, <line2>, '<bang>', 0, 'windo', <q-args>)
+command! -range -bang -nargs=? -complete=tag WinGrepAdd
+      \ :call <SID>VimGrep(<line1>, <line2>, '<bang>', 1, 'windo', <q-args>)
+command! -range -bang -nargs=? -complete=tag BufGrep
+      \ :call <SID>VimGrep(<line1>, <line2>, '<bang>', 0, 'bufdo', <q-args>)
+command! -range -bang -nargs=? -complete=tag BufGrepAdd
+      \ :call <SID>VimGrep(<line1>, <line2>, '<bang>', 1, 'bufdo', <q-args>)
+command! -range -bang -nargs=? -complete=tag ArgGrep
+      \ :call <SID>VimGrep(<line1>, <line2>, '<bang>', 0, 'argdo', <q-args>)
+command! -range -bang -nargs=? -complete=tag ArgGrepAdd
+      \ :call <SID>VimGrep(<line1>, <line2>, '<bang>', 1, 'argdo', <q-args>)
+command! -range -bang -nargs=* -complete=buffer GrepBufs
+      \ :call <SID>GrepBuffers(<line1>, <line2>, '<bang>', 0, <f-args>)
+command! -range -bang -nargs=* -complete=buffer GrepBufsAdd
+      \ :call <SID>GrepBuffers(<line1>, <line2>, '<bang>', 1, <f-args>)
 
 if (! exists("no_plugin_maps") || ! no_plugin_maps) &&
       \ (! exists("no_greputils_maps") || ! no_greputils_maps)
@@ -653,13 +653,13 @@ function! s:InitPreviewWindow(grepAdd, cmd, args)
   1
 endfunction
 
-function! s:VimGrep(fline, lline, grepAdd, vimWild, ...)
+function! s:VimGrep(fline, lline, bang, grepAdd, vimWild, ...)
   exec MakeArgumentString()
-  exec 'call s:_VimGrep(a:fline, a:lline, a:grepAdd, a:vimWild, '
+  exec 'call s:_VimGrep(a:fline, a:lline, a:bang == "!", a:grepAdd, a:vimWild, '
         \ argumentString.')'
 endfunction
 
-function! s:GrepBuffers(fline, lline, grepAdd, ...)
+function! s:GrepBuffers(fline, lline, bang, grepAdd, ...)
   let pat = (a:0 && a:1 != ' ' ? a:1 : '')
   let patArg = pat
   if pat != ''
@@ -686,8 +686,8 @@ function! s:GrepBuffers(fline, lline, grepAdd, ...)
     " Doing an exec to avoid passing an empty pattern
     " Do init for the last 
     let lastCall = (a:0 <= 1 || i == a:0)
-    exec 'call s:_VimGrep(fline, lline, !firstCall || a:grepAdd, cmd, '.
-          \ patArg.')'
+    exec 'call s:_VimGrep(a:fline, a:lline, a:bang == "!",'.
+          \' !firstCall || a:grepAdd, cmd, '.patArg.')'
 
     let firstCall = 0
     let i = i + 1
@@ -700,7 +700,7 @@ function! s:GrepBuffers(fline, lline, grepAdd, ...)
         \ argumentList, ''))
 endfunction
 
-function! s:_VimGrep(fline, lline, grepAdd, vimWild, ...)
+function! s:_VimGrep(fline, lline, inverse, grepAdd, vimWild, ...)
   if a:fline == a:lline && a:fline == line('.')
     let fline = '1'
     let lline = '$'
@@ -726,8 +726,8 @@ function! s:_VimGrep(fline, lline, grepAdd, vimWild, ...)
     " Expand <cword> and <cWORD>.
     let arg = substitute(arg, '<cword>\|<cWORD>', '\=expand(submatch(0))', 'g')
   endif
-  let cmd = a:vimWild.' '.fline.','.lline.'g'.g:greputilsVimGrepSepChar.arg.
-        \ g:greputilsVimGrepSepChar
+  let cmd = a:vimWild.' '.fline.','.lline.(a:inverse ? 'v' : 'g').
+        \ g:greputilsVimGrepSepChar.arg.g:greputilsVimGrepSepChar
   echo cmd
   let _eventignore = &eventignore
   let _hidden = &hidden
